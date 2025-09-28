@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<title>Universo de Amor ❤️✨</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<style>
+  :root{ --fg: #fff; --muted: #ddd; }
+  html,body{height:100%;margin:0;background:#000;overflow:hidden;font-family:'Segoe UI',sans-serif;color:var(--fg);}
+  canvas#universe{position:fixed;inset:0;z-index:0;display:block;}
+  #planet{
+    position:absolute;left:50%;top:50%;
+    width:240px;height:240px;border-radius:50%;
+    background-size:cover;background-position:center;
+    box-shadow:0 0 50px rgba(255,200,80,0.5);
+    transform:translate(-50%,-50%);
+    z-index:2;transition:background-image .9s ease-in-out;
+  }
+  #wordContainer{position:fixed;inset:0;pointer-events:none;z-index:3}
+  .word{
+    position:absolute;font-weight:700;font-size:13px;white-space:nowrap;
+    color:var(--fg);text-shadow:0 0 6px #fff,0 0 12px #ccc;
+    user-select:none;transition:opacity .18s, transform .18s;
+  }
+  .heart, .flower, .comet {
+    position:absolute;pointer-events:none;z-index:5;font-size:20px;text-shadow:0 0 6px #fff;
+  }
+  #help{position:fixed;left:10px;bottom:10px;font-size:14px;color:var(--muted);opacity:.85;z-index:10}
+  /* small optimization: hide selection outlines */
+  *{outline:none}
+</style>
+</head>
+<body>
+  <audio id="bgMusic" src="aud/mus1.mp3" autoplay loop></audio>
+  <canvas id="universe"></canvas>
+  <div id="planet"></div>
+  <div id="wordContainer"></div>
+  <div id="help">🌐 Arrastra para girar · Haz clic en cualquier parte 💖</div>
+
+<script>
+//musica
+const bgMusic = document.getElementById("bgMusic");
+
+// Forzar que empiece la música
+bgMusic.play().catch(() => {
+  console.log("Autoplay bloqueado, esperando interacción...");
+  document.addEventListener("click", () => {
+    bgMusic.play();
+  }, { once: true });
+});
+
+
+/* ----------------------------
+   Setup canvas + resize
+   ---------------------------- */
+const canvas = document.getElementById('universe');
+const ctx = canvas.getContext('2d', { alpha: true });
+let W = innerWidth, H = innerHeight;
+function resize() { W = canvas.width = innerWidth; H = canvas.height = innerHeight; }
+window.addEventListener('resize', resize);
+resize();
+
+/* ----------------------------
+   Nebulosas / galaxias (background)
+   ---------------------------- */
+const nebulas = [];
+for (let i=0;i<3;i++){
+  nebulas.push({
+    x: Math.random()*W,
+    y: Math.random()*H,
+    r: 180 + Math.random()*420,
+    color: `hsla(${Math.floor(Math.random()*360)},80%,60%,0.12)`
+  });
+}
+const galaxies = [];
+for (let i=0;i<2;i++){
+  galaxies.push({
+    x: Math.random()*W,
+    y: Math.random()*H,
+    r: 240 + Math.random()*380,
+    angle: Math.random()*Math.PI*2,
+    speed: 0.0006 + Math.random()*0.0012
+  });
+}
+
+/* ----------------------------
+   Estrellas parpadeantes (por toda la pantalla)
+   ---------------------------- */
+const STARS_COUNT = 2000; // muchas estrellas
+const stars = [];
+function initStars(){
+  stars.length = 0;
+  for (let i=0;i<STARS_COUNT;i++){
+    stars.push({
+      x: Math.random()*W,
+      y: Math.random()*H,
+      r: 0.4 + Math.random()*1.8,               // tamaño (variado)
+      base: 0.2 + Math.random()*0.8,            // brillo base
+      amp: 0.2 + Math.random()*0.6,             // amplitud de parpadeo
+      freq: 0.6 + Math.random()*2.2,            // frecuencia
+      phase: Math.random()*Math.PI*2
+    });
+  }
+}
+initStars();
+window.addEventListener('resize', ()=>{ initStars(); }); // reinit en resize para repartir correctamente
+
+/* ----------------------------
+   Estrellas fugaces / grupos
+   ---------------------------- */
+const shootingStars = [];
+// Crea una fugaz que parte desde un lado hacia un punto aleatorio del canvas
+function createShootingFromSide(side){
+  // side: 0=left,1=right,2=top,3=bottom
+  let sx, sy;
+  const margin = 60;
+  if (side===0){ sx = -margin; sy = Math.random()*H; }
+  else if (side===1){ sx = W + margin; sy = Math.random()*H; }
+  else if (side===2){ sx = Math.random()*W; sy = -margin; }
+  else { sx = Math.random()*W; sy = H + margin; }
+
+  const tx = Math.random()*W;
+  const ty = Math.random()*H;
+  // velocidad en px/s
+  const speed = 650 + Math.random()*600; // rápido para sensación de fugaz
+  const angle = Math.atan2(ty - sy, tx - sx);
+  const vx = Math.cos(angle) * speed;
+  const vy = Math.sin(angle) * speed;
+  const distance = Math.hypot(tx - sx, ty - sy);
+  const maxLife = distance / speed + 0.2; // segundos
+  const len = 120 + Math.random()*300;
+  const color = ['#ffffff','#bfefff','#ffd1f2','#fff6b3'][Math.floor(Math.random()*4)];
+  shootingStars.push({ x: sx, y: sy, vx, vy, len, life:0, maxLife, color });
+  // cap to avoid too many
+  if (shootingStars.length > 40) shootingStars.splice(0, shootingStars.length - 40);
+}
+
+// Crear grupo de 3-4 fugaces desde lados distintos
+function spawnGroup(){
+  const n = 3 + Math.floor(Math.random()*2); // 3 o 4
+  const sides = [0,1,2,3].sort(()=>Math.random()-0.5); // mezclar
+  for (let i=0;i<n;i++){
+    createShootingFromSide(sides[i % sides.length]);
+  }
+}
+// interval automático de grupos
+let lastGroup = 0;
+const GROUP_INTERVAL = 1800 + Math.random()*1000; // ms (se ajusta en run)
+
+/* ----------------------------
+   Draw helpers
+   ---------------------------- */
+function drawBackground(){
+  // nebulas
+  nebulas.forEach(n=>{
+    const g = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, n.r);
+    g.addColorStop(0, n.color);
+    g.addColorStop(1, 'transparent');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, n.r, 0, Math.PI*2);
+    ctx.fill();
+  });
+  // galaxies (slow rotate)
+  galaxies.forEach(gx=>{
+    gx.angle += gx.speed;
+    const g = ctx.createRadialGradient(gx.x, gx.y, 0, gx.x, gx.y, gx.r);
+    g.addColorStop(0, 'rgba(255,255,255,0.14)');
+    g.addColorStop(0.5, 'rgba(180,180,255,0.06)');
+    g.addColorStop(1, 'transparent');
+    ctx.save();
+    ctx.translate(gx.x, gx.y);
+    ctx.rotate(gx.angle);
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.ellipse(0,0,gx.r*1.2, gx.r*0.6, 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+  });
+}
+
+/* ----------------------------
+   Draw stars (twinkle)
+   ---------------------------- */
+let globalTime = 0;
+function drawStars(dt){
+  // dt in seconds
+  // for performance, use fillRect for tiny points; still use alpha for twinkle
+  for (let i=0;i<stars.length;i++){
+    const s = stars[i];
+    const a = s.base + Math.sin(globalTime * s.freq + s.phase) * s.amp;
+    const alpha = Math.max(0.08, Math.min(1, a));
+    ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+    const r = s.r;
+    // small circle: use arc for slightly softer dots
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, r, 0, Math.PI*2);
+    ctx.fill();
+  }
+}
+
+/* ----------------------------
+   Draw shooting stars (tail + head)
+   ---------------------------- */
+function drawShooting(dt){
+  for (let i = shootingStars.length -1; i >= 0; i--){
+    const s = shootingStars[i];
+    s.life += dt;
+    const t = s.life / s.maxLife;
+    if (t >= 1){
+      shootingStars.splice(i,1);
+      continue;
+    }
+    // update position
+    s.x += s.vx * dt;
+    s.y += s.vy * dt;
+
+    // normalize velocity magnitude
+    const vmag = Math.hypot(s.vx, s.vy) || 1;
+    const tailX = s.x - (s.vx / vmag) * s.len;
+    const tailY = s.y - (s.vy / vmag) * s.len;
+
+    // gradient trail
+    const grad = ctx.createLinearGradient(s.x, s.y, tailX, tailY);
+    const alpha = 1 - t;
+    // slight warm head, fading tail
+    grad.addColorStop(0, hexToRgba(s.color, alpha));
+    grad.addColorStop(0.6, hexToRgba(s.color, alpha*0.5));
+    grad.addColorStop(1, hexToRgba(s.color, 0));
+    ctx.strokeStyle = grad;
+    ctx.lineWidth = Math.max(1.2, Math.min(4, s.len / 180));
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(s.x, s.y);
+    ctx.lineTo(tailX, tailY);
+    ctx.stroke();
+
+    // head
+    ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, 2.4 + (1-t)*1.8, 0, Math.PI*2);
+    ctx.fill();
+  }
+}
+
+/* small helper: hex to rgba */
+function hexToRgba(hex, a=1){
+  // support #rrggbb
+  const c = hex.replace('#','');
+  const r = parseInt(c.substring(0,2),16);
+  const g = parseInt(c.substring(2,4),16);
+  const b = parseInt(c.substring(4,6),16);
+  return `rgba(${r},${g},${b},${a})`;
+}
+
+/* ----------------------------
+   Planet image rotator
+   ---------------------------- */
+const planet = document.getElementById('planet');
+let currentImg = 1;
+function changePlanet(){
+  // ajusta la ruta de imagen a tu estructura (carpeta 'imagen' como antes)
+  planet.style.backgroundImage = `url("img/im${currentImg}.jpeg")`;
+  currentImg++;
+  if (currentImg > 10) currentImg = 1;
+}
+changePlanet();
+setInterval(changePlanet, 2000);
+
+/* ----------------------------
+   Words sphere (3D-like)
+   ---------------------------- */
+const baseWords = ["Te amo","Mi vida","Siempre","Mi cielo","Amor eterno","Mi sol","Te adoro","Mi corazón","Para siempre","Mi universo","Eres mi luz","Eres mi todo","Mi destino","Mi razón","Eres único","Mi alegría","Mi fortuna","Mi estrella","Mi ángel","Mi tesoro"];
+const palabras = [];
+for (let i=0;i<2;i++) palabras.push(...baseWords);
+const wordContainer = document.getElementById('wordContainer');
+const words = [];
+(function initWords(){
+  const count = palabras.length;
+  for (let i=0;i<count;i++){
+    const el = document.createElement('div');
+    el.className = 'word';
+    el.textContent = '❤️ ' + palabras[i];
+    wordContainer.appendChild(el);
+    const phi = Math.acos(1 - 2*(i+0.5)/count);
+    const theta = Math.PI*(1 + Math.sqrt(5))*(i+0.5);
+    words.push({ el, theta, phi });
+  }
+})();
+let rotX=0, rotY=0, dragging=false, lastX=0, lastY=0;
+window.addEventListener('pointerdown', (e)=>{ dragging=true; lastX=e.clientX; lastY=e.clientY; });
+window.addEventListener('pointermove', (e)=>{ if(!dragging) return; const dx=(e.clientX-lastX)*0.006; const dy=(e.clientY-lastY)*0.006; rotY+=dx; rotX+=dy; lastX=e.clientX; lastY=e.clientY; });
+window.addEventListener('pointerup', ()=>dragging=false);
+
+function renderWords(){
+  const cx = innerWidth/2, cy = innerHeight/2;
+  const radius = Math.min(innerWidth, innerHeight) * 0.42;
+  const fov = 400;
+  words.forEach(({el,theta,phi})=>{
+    let x = Math.sin(phi)*Math.cos(theta);
+    let y = Math.cos(phi);
+    let z = Math.sin(phi)*Math.sin(theta);
+
+    // rotate X
+    let y1 = y*Math.cos(rotX) - z*Math.sin(rotX);
+    let z1 = y*Math.sin(rotX) + z*Math.cos(rotX);
+    y = y1; z = z1;
+    // rotate Y
+    let x1 = x*Math.cos(rotY) + z*Math.sin(rotY);
+    let z2 = -x*Math.sin(rotY) + z*Math.cos(rotY);
+    x = x1; z = z2;
+
+    const scale = fov / (fov + z * radius);
+    const X = cx + x * radius * scale;
+    const Y = cy + y * radius * scale;
+    el.style.left = (X - el.offsetWidth/2) + 'px';
+    el.style.top = (Y - el.offsetHeight/2) + 'px';
+    el.style.opacity = scale < 0 ? 0 : scale.toFixed(2);
+    el.style.transform = `scale(${0.45 + scale*0.85})`;
+  });
+  requestAnimationFrame(renderWords);
+}
+renderWords();
+
+/* ----------------------------
+   Click explosion (hearts + flowers + girasoles + margaritas)
+   ---------------------------- */
+function explodeLove(x,y,count=30){
+  const emojis = ['❤️','💖','💘','💝','💕','❣️','🌹','💑','💞','😘','😍'];
+
+  // corazones y demás emojis que explotan
+  for (let i=0;i<count;i++){
+    const h = document.createElement('div');
+    h.className = 'heart';
+    h.textContent = emojis[Math.floor(Math.random()*emojis.length)];
+    h.style.left = (x-12) + 'px';
+    h.style.top  = (y-12) + 'px';
+    document.body.appendChild(h);
+    const angle = Math.random()*Math.PI*2;
+    const dist = 60 + Math.random()*160;
+    const tx = Math.cos(angle)*dist;
+    const ty = Math.sin(angle)*dist - (Math.random()*60);
+    const dur = 900 + Math.random()*1200;
+    h.animate(
+      [{ transform: "translate(0,0) scale(1)", opacity: 1 },
+       { transform: `translate(${tx}px,${ty}px) scale(${1 + Math.random()*0.9})`, opacity: 0 }],
+      { duration: dur, easing: "cubic-bezier(.2,.7,.1,1)" }
+    );
+    setTimeout(()=> h.remove(), dur + 50);
+  }
+
+  // 🌸🌹🌻🌼 flores cayendo
+  const flowerTypes = ['🌸','🌹','🌻','🌼'];
+  for (let i=0;i<80;i++){  // aumentado de 20 a 40 flores
+    const fx = Math.random()*innerWidth;
+    const f = document.createElement('div');
+    f.className = 'flower';
+    f.textContent = flowerTypes[Math.floor(Math.random()*flowerTypes.length)];
+    f.style.left = fx + 'px';
+    f.style.top = '-50px';
+    document.body.appendChild(f);
+    const dur = 4000 + Math.random()*3000;
+    f.animate(
+      [
+        { transform: "translateY(0)", opacity: 1 },
+        { transform: `translateY(${innerHeight + 120}px) rotate(${Math.random()*360}deg)`, opacity: 0 }
+      ],
+      { duration: dur, easing: 'ease-in' }
+    );
+    setTimeout(()=> f.remove(), dur + 100);
+  }
+}
+
+
+document.addEventListener('click', (e)=> { explodeLove(e.clientX, e.clientY, 30); });
+
+/* ----------------------------
+   Main animation loop
+   ---------------------------- */
+let lastTime = performance.now();
+function loop(now){
+  const dt = Math.max(0, (now - lastTime) / 1000); // seconds
+  lastTime = now;
+  globalTime += dt;
+
+  // clear (transparent over black background to keep subtle)
+  ctx.clearRect(0,0,W,H);
+
+  // draw background elements
+  drawBackground();
+
+  // draw twinkling stars
+  drawStars(dt);
+
+  // automatic groups of shooting stars (timed)
+  lastGroup += (dt*1000);
+  if (lastGroup > 800 + Math.random()*1200){ // variable interval
+    spawnGroup();
+    lastGroup = 0;
+  }
+
+  // draw shooting/comet stars
+  drawShooting(dt);
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+/* ----------------------------
+   spawnGroup wrapper
+   ---------------------------- */
+function spawnGroup(){
+  const n = 3 + Math.floor(Math.random()*2); // 3 or 4
+  const sides = [0,1,2,3].sort(()=>Math.random()-0.5);
+  for (let i=0;i<n;i++){
+    createShootingFromSide(sides[i % sides.length]);
+  }
+}
+
+/* ----------------------------
+   Utility: create single shooting star externally (if needed)
+   ---------------------------- */
+function createShootingFromSide(side){ // ensure function exists in current scope (redeclared above)
+  // (re-implemented here to avoid hoisting issues)
+  let sx, sy;
+  const margin = 60;
+  if (side===0){ sx = -margin; sy = Math.random()*H; }
+  else if (side===1){ sx = W + margin; sy = Math.random()*H; }
+  else if (side===2){ sx = Math.random()*W; sy = -margin; }
+  else { sx = Math.random()*W; sy = H + margin; }
+
+  const tx = Math.random()*W;
+  const ty = Math.random()*H;
+  const speed = 650 + Math.random()*600;
+  const angle = Math.atan2(ty - sy, tx - sx);
+  const vx = Math.cos(angle) * speed;
+  const vy = Math.sin(angle) * speed;
+  const distance = Math.hypot(tx - sx, ty - sy);
+  const maxLife = distance / speed + 0.2;
+  const len = 120 + Math.random()*300;
+  const color = ['#ffffff','#bfefff','#ffd1f2','#fff6b3'][Math.floor(Math.random()*4)];
+  shootingStars.push({ x: sx, y: sy, vx, vy, len, life: 0, maxLife, color });
+  if (shootingStars.length > 40) shootingStars.splice(0, shootingStars.length - 40);
+}
+
+/* ----------------------------
+   Inicial spawn para que no empiece vacío
+   ---------------------------- */
+for (let i=0;i<3;i++) spawnGroup();
+
+</script>
+</body>
+</html>
